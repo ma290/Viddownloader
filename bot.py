@@ -8,6 +8,7 @@ from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFi
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
+# --- Bot Config ---
 BOT_TOKEN = "7286167945:AAG_FL_bJihubKbDVN7_ZxZBPnJmIwWLhsY"
 OWNER_ID = 1442396009
 OWNER_USERNAME = "mrvoidance"
@@ -16,7 +17,7 @@ REQUIRED_CHANNEL = "mybotskallu"
 DATA_FILE = "users.json"
 PING_URL = "https://female-carilyn-namezakikr-443d0943.koyeb.app/"
 
-# ------------------ USER DB -------------------
+# --- Database ---
 def load_db():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -29,7 +30,7 @@ def save_db(data):
 
 users = load_db()
 
-# ------------------ FORCE SUB ------------------
+# --- Channel Join Check ---
 def check_subscription(user_id):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember?chat_id=@{REQUIRED_CHANNEL}&user_id={user_id}"
@@ -38,7 +39,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# ------------------ COMMANDS ------------------
+# --- Bot Handlers ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = str(user.id)
@@ -117,7 +118,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if os.path.exists(filename):
         await context.bot.send_document(chat_id=uid, document=InputFile(filename))
-        os.remove(filename)
+        os.remove(filename)  # ✅ Delete after upload
         if not users[uid].get("premium"):
             users[uid]["downloads"] -= 1
             save_db(users)
@@ -129,7 +130,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = str(update.effective_user.id)
         await update.callback_query.message.reply_text(f"🔗 Your referral link:\nhttps://t.me/{context.bot.username}?start={uid}")
 
-# ------------------ HTTP SERVER ------------------
+# --- HTTP Server ---
 def start_http_server():
     class Handler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -138,6 +139,7 @@ def start_http_server():
     print("🌐 HTTP Server running on port 8000")
     server.serve_forever()
 
+# --- Uptime Ping ---
 def ping():
     try:
         requests.get(PING_URL)
@@ -145,7 +147,7 @@ def ping():
     except Exception as e:
         print(f"⚠️ Ping failed: {e}")
 
-# ------------------ MAIN ------------------
+# --- Main Entry ---
 if __name__ == "__main__":
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -164,7 +166,3 @@ if __name__ == "__main__":
 
     print("✅ Bot is running...")
     app.run_polling()
-
-
-
-                                                                         
