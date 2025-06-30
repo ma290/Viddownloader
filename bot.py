@@ -3,12 +3,12 @@ import json
 import requests
 import threading
 import time
+import pytz
 from http.server import SimpleHTTPRequestHandler, HTTPServer
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
 from apscheduler.schedulers.background import BackgroundScheduler
 
-# --- Bot Config ---
 BOT_TOKEN = "7286167945:AAG_FL_bJihubKbDVN7_ZxZBPnJmIwWLhsY"
 OWNER_ID = 1442396009
 OWNER_USERNAME = "mrvoidance"
@@ -17,7 +17,7 @@ REQUIRED_CHANNEL = "mybotskallu"
 DATA_FILE = "users.json"
 PING_URL = "https://female-carilyn-namezakikr-443d0943.koyeb.app/"
 
-# --- Database ---
+# ------------------ USER DB -------------------
 def load_db():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r") as f:
@@ -30,7 +30,7 @@ def save_db(data):
 
 users = load_db()
 
-# --- Channel Join Check ---
+# ------------------ FORCE SUB ------------------
 def check_subscription(user_id):
     try:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember?chat_id=@{REQUIRED_CHANNEL}&user_id={user_id}"
@@ -39,7 +39,7 @@ def check_subscription(user_id):
     except:
         return False
 
-# --- Bot Handlers ---
+# ------------------ COMMANDS ------------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = str(user.id)
@@ -118,7 +118,7 @@ async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if os.path.exists(filename):
         await context.bot.send_document(chat_id=uid, document=InputFile(filename))
-        os.remove(filename)  # ✅ Delete after upload
+        os.remove(filename)
         if not users[uid].get("premium"):
             users[uid]["downloads"] -= 1
             save_db(users)
@@ -130,7 +130,7 @@ async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         uid = str(update.effective_user.id)
         await update.callback_query.message.reply_text(f"🔗 Your referral link:\nhttps://t.me/{context.bot.username}?start={uid}")
 
-# --- HTTP Server ---
+# ------------------ HTTP SERVER ------------------
 def start_http_server():
     class Handler(SimpleHTTPRequestHandler):
         def log_message(self, format, *args):
@@ -139,7 +139,6 @@ def start_http_server():
     print("🌐 HTTP Server running on port 8000")
     server.serve_forever()
 
-# --- Uptime Ping ---
 def ping():
     try:
         requests.get(PING_URL)
@@ -147,7 +146,7 @@ def ping():
     except Exception as e:
         print(f"⚠️ Ping failed: {e}")
 
-# --- Main Entry ---
+# ------------------ MAIN ------------------
 if __name__ == "__main__":
     app = Application.builder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start", start))
@@ -160,7 +159,9 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), download))
 
     threading.Thread(target=start_http_server, daemon=True).start()
-    scheduler = BackgroundScheduler()
+
+    # ✅ timezone fixed
+    scheduler = BackgroundScheduler(timezone=pytz.UTC)
     scheduler.add_job(ping, "interval", minutes=5)
     scheduler.start()
 
