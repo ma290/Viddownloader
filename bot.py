@@ -5,6 +5,11 @@ from datetime import date
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
 from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler, CallbackContext
 from yt_dlp import YoutubeDL
+import http.server
+import socketserver
+import threading
+import time
+import urllib.request
 
 # ---------- CONFIG ----------
 BOT_TOKEN = "7286167945:AAG_FL_bJihubKbDVN7_ZxZBPnJmIwWLhsY"
@@ -15,6 +20,8 @@ REQUIRED_CHANNEL = "mybotskallu"  # without @
 DAILY_LIMIT = 5
 DATA_FILE = "bot_state.json"
 DOWNLOAD_DIR = "downloads"
+HTTP_PORT = 8000
+PING_URL = "https://female-carilyn-namezakikr-443d0943.koyeb.app/"  # Change this
 # ---------------------------
 
 logging.basicConfig(level=logging.INFO)
@@ -170,6 +177,21 @@ def download(update: Update, context: CallbackContext):
         logging.error(e)
         update.message.reply_text("❗ Failed to download this link.")
 
+def run_http_server():
+    handler = http.server.SimpleHTTPRequestHandler
+    with socketserver.TCPServer(('', HTTP_PORT), handler) as httpd:
+        print(f"🌐 HTTP Server running on port {HTTP_PORT}")
+        httpd.serve_forever()
+
+def ping_forever():
+    while True:
+        try:
+            print(f"🔁 Pinging {PING_URL}")
+            urllib.request.urlopen(PING_URL)
+        except Exception as e:
+            print(f"❌ Ping failed: {e}")
+        time.sleep(300)
+
 def main():
     os.makedirs(DOWNLOAD_DIR, exist_ok=True)
     updater = Updater(BOT_TOKEN, use_context=True)
@@ -188,5 +210,7 @@ def main():
     updater.idle()
 
 if __name__ == '__main__':
+    threading.Thread(target=run_http_server, daemon=True).start()
+    threading.Thread(target=ping_forever, daemon=True).start()
     main()
-  
+    
