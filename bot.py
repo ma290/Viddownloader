@@ -1,216 +1,170 @@
 import os
 import json
-import logging
-from datetime import date
-from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, InputFile
-from telegram.ext import Updater, CommandHandler, MessageHandler, Filters, CallbackQueryHandler, CallbackContext
-from yt_dlp import YoutubeDL
-import http.server
-import socketserver
+import requests
 import threading
 import time
-import urllib.request
+from http.server import SimpleHTTPRequestHandler, HTTPServer
+from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton, InputFile
+from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters, CallbackQueryHandler
+from apscheduler.schedulers.background import BackgroundScheduler
 
-# ---------- CONFIG ----------
 BOT_TOKEN = "7286167945:AAG_FL_bJihubKbDVN7_ZxZBPnJmIwWLhsY"
 OWNER_ID = 1442396009
 OWNER_USERNAME = "mrvoidance"
-ADMINS = [OWNER_ID, "6630039904"]  # usernames or user IDs
-REQUIRED_CHANNEL = "mybotskallu"  # without @
-DAILY_LIMIT = 5
-DATA_FILE = "bot_state.json"
-DOWNLOAD_DIR = "downloads"
-HTTP_PORT = 8000
-PING_URL = "https://female-carilyn-namezakikr-443d0943.koyeb.app/"  # Change this
-# ---------------------------
+ADMINS = [OWNER_ID, 6630039904]
+REQUIRED_CHANNEL = "mybotskallu"
+DATA_FILE = "users.json"
+PING_URL = "https://female-carilyn-namezakikr-443d0943.koyeb.app/"
 
-logging.basicConfig(level=logging.INFO)
-
+# ------------------ USER DB -------------------
 def load_db():
-    if not os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "w") as f:
-            json.dump({}, f)
-    with open(DATA_FILE, "r") as f:
-        return json.load(f)
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r") as f:
+            return json.load(f)
+    return {}
 
 def save_db(data):
     with open(DATA_FILE, "w") as f:
         json.dump(data, f, indent=2)
 
-def get_user(uid):
-    uid = str(uid)
-    db = load_db()
-    today = str(date.today())
-    if uid not in db:
-        db[uid] = {"quota": DAILY_LIMIT, "premium": False, "referrals": 0, "last_reset": today}
-    elif db[uid]["last_reset"] != today and not db[uid]["premium"]:
-        db[uid]["quota"] = DAILY_LIMIT
-        db[uid]["last_reset"] = today
-    save_db(db)
-    return db[uid]
+users = load_db()
 
-def update_user(uid, changes):
-    uid = str(uid)
-    db = load_db()
-    user = get_user(uid)
-    user.update(changes)
-    db[uid] = user
-    save_db(db)
-
-def consume(uid):
-    user = get_user(uid)
-    if not user["premium"]:
-        user["quota"] -= 1
-        update_user(uid, user)
-
-def add_referral(uid):
-    user = get_user(uid)
-    user["referrals"] += 1
-    user["quota"] += 5
-    update_user(uid, user)
-
-def add_premium(uid): update_user(uid, {"premium": True, "quota": 999})
-def remove_premium(uid): update_user(uid, {"premium": False, "quota": DAILY_LIMIT})
-def is_admin(user): return str(user.id) in map(str, ADMINS) or user.username in ADMINS or user.username == OWNER_USERNAME
-
-def check_subscription(bot: Bot, user_id):
+# ------------------ FORCE SUB ------------------
+def check_subscription(user_id):
     try:
-        member = bot.get_chat_member(f"@{REQUIRED_CHANNEL}", user_id)
-        return member.status in ["member", "administrator", "creator"]
+        url = f"https://api.telegram.org/bot{BOT_TOKEN}/getChatMember?chat_id=@{REQUIRED_CHANNEL}&user_id={user_id}"
+        resp = requests.get(url).json()
+        return resp['result']['status'] in ['member', 'administrator', 'creator']
     except:
         return False
 
-def force_sub_buttons():
-    return InlineKeyboardMarkup([
-        [
-            InlineKeyboardButton("🔔 Join Channel", url=f"https://t.me/{REQUIRED_CHANNEL}"),
-            InlineKeyboardButton("✅ I've Subscribed", callback_data="subscribed")
-        ]
-    ])
-
-def start(update: Update, context: CallbackContext):
+# ------------------ COMMANDS ------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     uid = str(user.id)
-    if not check_subscription(context.bot, user.id):
-        update.message.reply_text("🔒 Please subscribe to continue:", reply_markup=force_sub_buttons())
+    if uid not in users:
+        users[uid] = {"downloads": 0, "ref": None, "premium": uid in ADMINS}
+        save_db(users)
+
+    if not check_subscription(uid):
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{REQUIRED_CHANNEL}")]
+        ])
+        await update.message.reply_text("🔒 Please join our channel to use this bot!", reply_markup=btn)
         return
 
-    args = context.args
-    if args and args[0].startswith("ref_"):
-        ref = args[0].split("_")[1]
-        if ref != uid:
-            add_referral(ref)
+    ref = context.args[0] if context.args else None
+    if ref and ref != uid and users.get(ref):
+        users[ref]["downloads"] += 5
+        save_db(users)
+        await context.bot.send_message(ref, f"🎁 You earned 5 downloads from a referral!")
 
-    info = get_user(uid)
-    ref_link = f"https://t.me/{context.bot.username}?start=ref_{uid}"
-    text = f"👋 Welcome!\nYou have {info['quota']} downloads left today.\nPremium: {'✅' if info['premium'] else '❌'}\nReferrals: {info['referrals']}\n\n👥 Invite: {ref_link}"
-    buttons = [[InlineKeyboardButton("🎁 Buy Premium ₹50", callback_data="buy")],
-               [InlineKeyboardButton("👥 Invite Friends", url=ref_link)]]
-    update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(buttons))
+    await update.message.reply_text(f"👋 Welcome {user.first_name}! Send a video link to download.")
 
-def help_cmd(update: Update, context: CallbackContext):
-    uid = update.effective_user.id
-    user = get_user(uid)
-    update.message.reply_text(f"""🆘 Bot Help\n\nSend a video/web link and I'll try to download it.\n\n🎯 Limits:\n- 5 downloads/day (free)\n- +5/downloads per referral\n- ₹50/month = Unlimited\n\n📊 You have {user['quota']} downloads left today.\n\nAdmin Commands:\n/add <uid>\n/rm <uid>\n/up""")
+async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    count = users.get(uid, {}).get("downloads", 0)
+    await update.message.reply_text(f"📄 Commands:\n/start - Start bot\n/help - Show help\n/referral - Get your link\n/up - Admin upload DB\n🎬 Remaining downloads: {count}")
 
-def admin_add(update: Update, context: CallbackContext):
-    if not is_admin(update.effective_user): return
+async def referral(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = str(update.effective_user.id)
+    await update.message.reply_text(f"🔗 Your referral link:\nhttps://t.me/{context.bot.username}?start={uid}")
+
+async def upload_db(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMINS:
+        return
+    await update.message.reply_document(InputFile(open(DATA_FILE, "rb")), caption="📂 User DB")
+
+async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMINS:
+        return
     if context.args:
-        uid = context.args[0]
-        add_premium(uid)
-        update.message.reply_text(f"✅ Premium added to {uid}")
+        users[context.args[0]] = {"downloads": 9999, "premium": True}
+        save_db(users)
+        await update.message.reply_text("✅ User added as premium")
 
-def admin_rm(update: Update, context: CallbackContext):
-    if not is_admin(update.effective_user): return
-    if context.args:
-        uid = context.args[0]
-        remove_premium(uid)
-        update.message.reply_text(f"❌ Premium removed from {uid}")
+async def admin_rm(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id not in ADMINS:
+        return
+    if context.args and context.args[0] in users:
+        users[context.args[0]]["premium"] = False
+        save_db(users)
+        await update.message.reply_text("❌ Premium removed")
 
-def upload_db(update: Update, context: CallbackContext):
-    if not is_admin(update.effective_user): return
-    update.message.reply_document(InputFile(DATA_FILE), caption="📂 User DB")
-
-def handle_callback(update: Update, context: CallbackContext):
-    query = update.callback_query
-    user = query.from_user
-    if query.data == "buy":
-        context.bot.send_message(OWNER_ID, f"💰 @{user.username} wants Premium. Use /add {user.id}")
-        query.edit_message_text("💡 Owner notified. Please wait.")
-    elif query.data == "subscribed":
-        if check_subscription(context.bot, user.id):
-            query.edit_message_text("✅ Thank you! You may now use the bot.")
-        else:
-            query.answer("❌ You haven't subscribed yet.", show_alert=True)
-    query.answer()
-
-def download(update: Update, context: CallbackContext):
+async def download(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
-    uid = user.id
-    if not check_subscription(context.bot, uid):
-        update.message.reply_text("🔒 Please subscribe to continue:", reply_markup=force_sub_buttons())
+    uid = str(user.id)
+
+    if not check_subscription(uid):
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Join Channel", url=f"https://t.me/{REQUIRED_CHANNEL}")]
+        ])
+        await update.message.reply_text("🔒 Please join our channel to use this bot!", reply_markup=btn)
         return
 
-    info = get_user(uid)
-    if info["quota"] <= 0 and not info["premium"]:
-        btns = [[InlineKeyboardButton("🎁 Buy Premium ₹50", callback_data="buy")]]
-        update.message.reply_text("❌ Daily limit used.", reply_markup=InlineKeyboardMarkup(btns))
+    if not users.get(uid, {}).get("premium") and users[uid]["downloads"] <= 0:
+        btn = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🎯 Refer & Earn", callback_data="ref")],
+            [InlineKeyboardButton("💎 Buy Premium (50rs)", url=f"https://t.me/{OWNER_USERNAME}")]
+        ])
+        await update.message.reply_text("🚫 Daily limit reached. Refer or buy premium!", reply_markup=btn)
         return
 
     url = update.message.text.strip()
-    update.message.reply_text("⏬ Downloading...")
-    opts = {
-        "format": "bv*+ba/best",
-        "merge_output_format": "mp4",
-        "outtmpl": f"{DOWNLOAD_DIR}/%(id)s.%(ext)s",
-        "quiet": True,
-        "noplaylist": True
-    }
+    filename = f"video_{uid}.mp4"
+    cmd = f"yt-dlp -f best -o {filename} {url}"
+    os.system(cmd)
+
+    if os.path.exists(filename):
+        await context.bot.send_document(chat_id=uid, document=InputFile(filename))
+        os.remove(filename)
+        if not users[uid].get("premium"):
+            users[uid]["downloads"] -= 1
+            save_db(users)
+    else:
+        await update.message.reply_text("❌ Failed to download video. Try another link.")
+
+async def callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.callback_query.data == "ref":
+        uid = str(update.effective_user.id)
+        await update.callback_query.message.reply_text(f"🔗 Your referral link:\nhttps://t.me/{context.bot.username}?start={uid}")
+
+# ------------------ HTTP SERVER ------------------
+def start_http_server():
+    class Handler(SimpleHTTPRequestHandler):
+        def log_message(self, format, *args):
+            return
+    server = HTTPServer(("0.0.0.0", 8000), Handler)
+    print("🌐 HTTP Server running on port 8000")
+    server.serve_forever()
+
+def ping():
     try:
-        with YoutubeDL(opts) as ydl:
-            data = ydl.extract_info(url)
-            path = ydl.prepare_filename(data)
-        update.message.reply_document(InputFile(path), caption=data.get("title", "🎬 Your file"))
-        os.remove(path)
-        consume(uid)
+        requests.get(PING_URL)
+        print(f"🔁 Pinging {PING_URL}")
     except Exception as e:
-        logging.error(e)
-        update.message.reply_text("❗ Failed to download this link.")
+        print(f"⚠️ Ping failed: {e}")
 
-def run_http_server():
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(('', HTTP_PORT), handler) as httpd:
-        print(f"🌐 HTTP Server running on port {HTTP_PORT}")
-        httpd.serve_forever()
+# ------------------ MAIN ------------------
+if __name__ == "__main__":
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_cmd))
+    app.add_handler(CommandHandler("referral", referral))
+    app.add_handler(CommandHandler("up", upload_db))
+    app.add_handler(CommandHandler("add", admin_add))
+    app.add_handler(CommandHandler("rm", admin_rm))
+    app.add_handler(CallbackQueryHandler(callback))
+    app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), download))
 
-def ping_forever():
-    while True:
-        try:
-            print(f"🔁 Pinging {PING_URL}")
-            urllib.request.urlopen(PING_URL)
-        except Exception as e:
-            print(f"❌ Ping failed: {e}")
-        time.sleep(300)
-
-def main():
-    os.makedirs(DOWNLOAD_DIR, exist_ok=True)
-    updater = Updater(BOT_TOKEN, use_context=True)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("help", help_cmd))
-    dp.add_handler(CommandHandler("add", admin_add))
-    dp.add_handler(CommandHandler("rm", admin_rm))
-    dp.add_handler(CommandHandler("up", upload_db))
-    dp.add_handler(CallbackQueryHandler(handle_callback))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, download))
+    threading.Thread(target=start_http_server, daemon=True).start()
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(ping, "interval", minutes=5)
+    scheduler.start()
 
     print("✅ Bot is running...")
-    updater.start_polling()
-    updater.idle()
+    app.run_polling()
 
-if __name__ == '__main__':
-    threading.Thread(target=run_http_server, daemon=True).start()
-    threading.Thread(target=ping_forever, daemon=True).start()
-    main()
-    
+
+
+                                                                         
