@@ -1,5 +1,5 @@
-python-telegram-bot==20.7
-yt-dlp==2024.5.27
-Flask==2.3.3
+python-telegram-bot==13.5
 apscheduler==3.10.4
 pytz
+requests
+yt-dlp
