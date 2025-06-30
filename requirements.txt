@@ -1,5 +1,5 @@
 python-telegram-bot==13.5
-apscheduler==3.10.4
+apscheduler==3.6.3
 pytz
 requests
 yt-dlp
